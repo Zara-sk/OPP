@@ -34,9 +34,8 @@ static void *request_handler(void* arg) {
 	shutdown(args->client_fd, SHUT_WR);
 
   cout << " + [" << args->request_number << "]" << endl;
-  pthread_exit(NULL);
-
   delete args;
+  pthread_exit(NULL);
 }
 
 void start_server(size_t stack_size) {
