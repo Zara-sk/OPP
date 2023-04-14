@@ -107,96 +107,138 @@ static double timeDiff(timespec start, timespec stop) {
          1.0 * (stop.tv_nsec - start.tv_nsec) / 1.0e+9;
 }
 
-void relief135_filter() {
-  int M[9] = {1, 0, 0,0,  0, 0, 0, 0, -1};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
+typedef struct FilterProps {
+  int M[9];
+  int div;
+  int offset;
+} FilterProps;
+
+enum Filters {
+  GAUSS     = 0,
+  EMBOS     = 1,
+  SHAPE     = 2,
+  LAPLASIAN = 3,
+  RELIEF135 = 4,
+  RELIEF90  = 5,
+};
+
+FilterProps dispatch_filter(int filter_id) {
+  FilterProps props;
+
+  switch (filter_id) {
+    case GAUSS: {
+      int M[9] = {0, 1, 0, 1, 4, 1, 0, 1, 0};
+      copy(M, M + 9, props.M);
+      props.div = 8;
+      props.offset = 0;
+      break;
+    }
+    
+    case EMBOS: {
+      int M[9] = {-2, -1, 0, -1, 1, 1, 0, 1, 2};
+      copy(M, M + 9, props.M);
+      props.div = 4;
+      props.offset = 0;
+      break;
+    }
+
+    case SHAPE: {
+      int M[9] = {0, -1, 0, -1, 9, -1, 0, -1, 0};
+      copy(M, M + 9, props.M);
+      props.div = 5;
+      props.offset = 128;
+      break;
+    }
+
+    case LAPLASIAN: {
+      int M[9] = {-1, -1, -1, -1, 8, -1, -1, -1, -1};
+      copy(M, M + 9, props.M);
+      props.div = 1;
+      props.offset = 128;
+      break;
+    }
+
+    case RELIEF135: {
+      int M[9] = {1, 0, 0, 0, 0, 0, 0, 0, -1};
+      copy(M, M + 9, props.M);
+      props.div = 1;
+      props.offset = 128;
+      break;
+    }
+
+    case RELIEF90: {
+      int M[9] = {0, 1, 0, 0, 0, 0, 0, -1, 0};
+      copy(M, M + 9, props.M);
+      props.div = 2;
+      props.offset = 128;
+      break;
+    }
+
+    default: {
+      props.div = -1;
+    }
+  }
+  return props;
+}
+
+
+void apply_filter(FilterProps p) {
+
+  int id, size;
+  int ARRAY_SIZE = width * height;
+
+  #pragma omp parallel private(size, id)
+  {
+    id = omp_get_thread_num();
+    size = omp_get_num_threads();
+
+    int integer_part = width / size;
+    int remainder = width % size;
+    int a_local_size = integer_part + ((id < remainder) ? 1 : 0);
+
+    int start = integer_part * id + ((id < remainder) ? id : remainder) + (id == 0 ? 1 : 0);
+
+    int end = start + a_local_size + (id == size - 1 ? -1 : 0);
+
+    for (int i = start; i < end; i++) {
+      for (int j = 1; j < height - 1; j++) {
+        double f = 0;
+        for (int fi = 0; fi < 9; fi++) {
+          f += image[(i + (fi / 3))*width + (j + (fi % 3))] * p.M[fi];
+        }
+        result_image[i*width + j] = int(f) / p.div + p.offset;
       }
-      result_image[i*width + j] = int(f) / 1  + 128;
     }
   }
 }
 
-void relief90_filter() {
-  int M[9] = {0, 1, 0, 0, 0, 0, 0, -1, 0};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
-      }
-      result_image[i*width + j] = int(f) / 2 + 128;
-    }
-  }
-}
+int main(int argc, char* argv[]) {
 
-void laplasian_filter() {
-  int M[9] = {-1, -1, -1, -1, 8, -1, -1, -1, -1};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
-      }
-      result_image[i*width + j] = int(f) / 1  + 208;
-    }
+  if (argc != 2) {
+    cout << "Не указан фильтр" << endl;
+    return -2;
   }
-}
-void shape_filter() {
-  int M[9] = {0, -1, 0, -1, 9, -1, 0, -1, 0};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
-      }
-      result_image[i*width + j] = int(f) / 5 + 128 ;
-    }
-  }
-}
 
-void gauss_filter() {
-  int M[9] = {0, 1, 0, 1, 4, 1, 0, 1, 0};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
-      }
-      result_image[i*width + j] = int(f) / 8 ;
-    }
-  }
-}
+  FilterProps props = dispatch_filter(atoi(argv[1]));
+  if (props.div == -1) {
+    cout << "Возможные фильтры:\n" << endl;
+    cout << "GAUSS     = 0" << endl;
+    cout << "EMBOS     = 1" << endl;
+    cout << "SHAPE     = 2" << endl;
+    cout << "LAPLASIAN = 3" << endl;
+    cout << "RELIEF135 = 4" << endl;
+    cout << "RELIEF90  = 5" << endl;
+    return -1;
 
-void embos_filter() {
-  int M[9] = {-2, -1, 0, -1, 1, 1, 0, 1, 2};
-  #pragma omp parallel for 
-  for (int i = 1; i < width - 1; i++) {
-    for (int j = 1; j < height - 1; j++) {
-      double f = 0;
-      for (int fi = 0; fi < 9; fi++) {
-        f += image[(i + (fi / 3))*width + (j + (fi % 3))] * M[fi];
-      }
-      result_image[i*width + j] = int(f) / 1 ;
-    }
   }
-}
 
-int main() {  
   struct timespec start, end;
   clock_gettime(CLOCK_MONOTONIC, &start);
 
   readBMP("cat1.bmp");
   saveBMP("gray.bmp");
-  embos_filter();
+
+  apply_filter(props);
   saveBMP("filtered.bmp");
 
   clock_gettime(CLOCK_MONOTONIC, &end);
